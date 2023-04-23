@@ -45,6 +45,7 @@ interface PluginSettings {
 	handleAllAttachments: boolean
 	excludeExtensionPattern: string
 	disableRenameNotice: boolean
+	closestFolder: string
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -56,6 +57,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
 	handleAllAttachments: false,
 	excludeExtensionPattern: '',
 	disableRenameNotice: false,
+	closestFolder: 'Ressourcen'
 }
 
 const PASTED_IMAGE_PREFIX = 'Pasted image '
@@ -147,17 +149,39 @@ export default class PasteImageRenamePlugin extends Plugin {
 		this.renameFile(file, newName, activeFile.path, true)
 	}
 
+
+	async getRessourcenFolderPath() {
+		const regex = /(.[^\/]+)(?:\\|\/)*/g;
+		let currentFilePath = this.app.workspace.activeEditor.file.path;
+	
+		let regexMatches = [...currentFilePath.matchAll(regex)];
+	
+		const ressourcenFolderName = this.settings.closestFolder;
+	
+		let searchPath = `${currentFilePath}`;
+		for (let i = regexMatches.length - 1; i >= 0; i--) {
+			searchPath = searchPath.replace(new RegExp(regexMatches[i][0]+'$'), '');
+			if(await this.app.vault.adapter.exists(`${searchPath}${ressourcenFolderName}`)) {
+				return `${searchPath}${ressourcenFolderName}`;
+			}
+		}
+		return null;
+	}
+
 	async renameFile(file: TFile, inputNewName: string, sourcePath: string, replaceCurrentLine?: boolean) {
 		// deduplicate name
 		const { name:newName } = await this.deduplicateNewName(inputNewName, file)
 		debugLog('deduplicated newName:', newName)
 		const originName = file.name
 
+		// Move file to correct folder
+		const ressourceFolder = await this.getRessourcenFolderPath();
+
 		// generate linkText using Obsidian API, linkText is either  ![](filename.png) or ![[filename.png]] according to the "Use [[Wikilinks]]" setting.
 		const linkText = this.app.fileManager.generateMarkdownLink(file, sourcePath)
 
 		// file system operation: rename the file
-		const newPath = path.join(file.parent.path, newName)
+		const newPath = path.join(ressourceFolder, newName)
 		try {
 			await this.app.fileManager.renameFile(file, newPath)
 		} catch (err) {
@@ -589,6 +613,19 @@ class SettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.imageNamePattern)
 				.onChange(async (value) => {
 					this.plugin.settings.imageNamePattern = value;
+					await this.plugin.saveSettings();
+				}
+			));
+
+		new Setting(containerEl)
+			.setName('Move file to closest folder')
+			.setDesc('Move the renamed file to the closest folder from the active file with the following name')
+			.setClass('long-description-setting-item')
+			.addText(text => text
+				.setPlaceholder('Ressourcen')
+				.setValue(this.plugin.settings.closestFolder)
+				.onChange(async (value) => {
+					this.plugin.settings.closestFolder = value;
 					await this.plugin.saveSettings();
 				}
 			));
